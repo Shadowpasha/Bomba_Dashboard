@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import styled from 'styled-components';
-import { Thermometer, Zap, Wind, Droplets } from 'lucide-react';
+import { Thermometer, Zap, Wind, Droplets, Battery } from 'lucide-react';
 import { theme } from '@/lib/theme';
 
 const Grid = styled.div`
@@ -61,6 +61,27 @@ const Unit = styled.span`
   margin-left: 4px;
 `;
 
+const BatteryBar = styled.div<{ level: number }>`
+  width: 100%;
+  height: 6px;
+  background: ${theme.colors.background};
+  border-radius: 3px;
+  margin-top: 10px;
+  overflow: hidden;
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: ${props => props.level}%;
+    background: ${props => props.level > 20 ? '#34C759' : '#FF3B30'};
+    transition: width 0.5s ease;
+  }
+`;
+
 function SensorCard({ label, value, unit, icon, color }: any) {
   return (
     <Card>
@@ -73,6 +94,7 @@ function SensorCard({ label, value, unit, icon, color }: any) {
           {value}
           <Unit>{unit}</Unit>
         </Value>
+        {label === 'Battery' && <BatteryBar level={value} />}
       </div>
     </Card>
   );
@@ -96,11 +118,11 @@ export default function SensorGrid() {
         color={theme.colors.primary}
       />
       <SensorCard
-        label="Volt"
-        value={14.2}
-        unit="V"
-        icon={<Zap size={20} />}
-        color={theme.colors.primary}
+        label="Battery"
+        value={85}
+        unit="%"
+        icon={<Battery size={20} />}
+        color="#34C759"
       />
       <SensorCard
         label="Hum"

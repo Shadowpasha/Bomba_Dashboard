@@ -1,9 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
 import { Joystick } from 'react-joystick-component';
-import { AlertTriangle, RotateCcw } from 'lucide-react';
+import { AlertTriangle, RotateCcw, Power } from 'lucide-react';
 import { theme } from '@/lib/theme';
 import RosConnection from '@/lib/ros/RosConnection';
 
@@ -69,6 +69,31 @@ const EmergencyButton = styled.button`
   }
 `;
 
+const ModeSwitch = styled.div<{ active: boolean }>`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: ${props => props.active ? theme.colors.primary : theme.colors.background};
+  color: ${props => props.active ? 'white' : theme.colors.text};
+  border: 2px solid ${theme.colors.border};
+  padding: 8px 16px;
+  border-radius: ${theme.radius.md};
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-bottom: 16px;
+
+  &:hover {
+    border-color: ${theme.colors.primary};
+  }
+
+  svg {
+    color: ${props => props.active ? 'white' : theme.colors.primary};
+  }
+`;
+
 const JoystickWrapper = styled.div`
   display: flex;
   align-items: center;
@@ -80,20 +105,37 @@ const JoystickWrapper = styled.div`
 `;
 
 export default function ManualControl() {
+  const [isManualMode, setIsManualMode] = useState(false);
+
+  const toggleManualMode = () => {
+    const nextMode = !isManualMode;
+    setIsManualMode(nextMode);
+
+    const ros = RosConnection.getInstance();
+    const overrideTopic = ros.createTopic('/manual_override', 'std_msgs/Bool');
+    if (overrideTopic) {
+      overrideTopic.publish({ data: nextMode });
+    }
+  };
+
   const handleMove = (event: any) => {
+    if (!isManualMode) return;
     const ros = RosConnection.getInstance();
     const cmdVel = ros.createTopic('/cmd_vel', 'geometry_msgs/Twist');
     if (cmdVel) {
-      // Linear X is forward/backward (event.y)
-      // Angular Z is left/right (event.x)
+      // Scale to match TD3 node: [0, 0.2] m/s linear, [-0.5, 0.5] rad/s angular
+      // event.x and event.y are normalized -100 to 100
+      // Re-scaled to 0.5 (max m/s and rad/s) for safety and control.
+      // event.x and event.y are expected to be -100 to 100
       cmdVel.publish({
-        linear: { x: event.y / 100, y: 0, z: 0 },
-        angular: { x: 0, y: 0, z: -event.x / 100 }
+        linear: { x: (event.y / 100) * 50.0, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: -(event.x / 100) * 50.0 }
       });
     }
   };
 
   const handleStop = () => {
+    if (!isManualMode) return;
     const ros = RosConnection.getInstance();
     const cmdVel = ros.createTopic('/cmd_vel', 'geometry_msgs/Twist');
     if (cmdVel) {
@@ -106,10 +148,18 @@ export default function ManualControl() {
 
   const handleEmergencyReturn = () => {
     const ros = RosConnection.getInstance();
-    const emergencyTopic = ros.createTopic('/emergency_return', 'std_msgs/Empty');
+    const emergencyTopic = ros.createTopic('/emergency_return', 'std_msgs/Bool');
     if (emergencyTopic) {
-      emergencyTopic.publish({});
+      emergencyTopic.publish({ data: true });
       alert('EMERGENCY RETURN SIGNAL SENT');
+    }
+  };
+
+  const handleStartExploration = () => {
+    const ros = RosConnection.getInstance();
+    const startTopic = ros.createTopic('/start_exploration', 'std_msgs/Bool');
+    if (startTopic) {
+      startTopic.publish({ data: true });
     }
   };
 
@@ -120,7 +170,12 @@ export default function ManualControl() {
         <RotateCcw size={16} color={theme.colors.textLight} style={{ cursor: 'pointer' }} />
       </Header>
 
-      <JoystickWrapper>
+      <ModeSwitch active={isManualMode} onClick={toggleManualMode}>
+        <Power size={14} />
+        {isManualMode ? 'MANUAL_ACTIVE' : 'AUTO_ACTIVE'}
+      </ModeSwitch>
+
+      <JoystickWrapper style={{ opacity: isManualMode ? 1 : 0.4, pointerEvents: isManualMode ? 'auto' : 'none', transition: 'all 0.3s' }}>
         <Joystick
           size={120}
           sticky={false}
@@ -131,10 +186,17 @@ export default function ManualControl() {
         />
       </JoystickWrapper>
 
-      <EmergencyButton onClick={handleEmergencyReturn}>
-        <AlertTriangle size={20} />
-        Emergency Return
-      </EmergencyButton>
+      <div style={{ width: '100%', display: 'flex', gap: '12px' }}>
+        <EmergencyButton onClick={handleStartExploration} style={{ background: theme.colors.success, boxShadow: '0 4px 0px #2da94c' }}>
+          <Power size={20} />
+          Start
+        </EmergencyButton>
+
+        <EmergencyButton onClick={handleEmergencyReturn}>
+          <AlertTriangle size={20} />
+          Return
+        </EmergencyButton>
+      </div>
     </Container>
   );
 }

@@ -22,8 +22,9 @@ const Container = styled.div`
 `;
 
 const Canvas = styled.canvas`
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
   image-rendering: pixelated;
 `;
 
@@ -77,6 +78,8 @@ export default function MapView() {
     const mapData = useRef<any>(null);
     const robotPose = useRef({ x: 0, y: 0, yaw: 0 });
     const markers = useRef<any[]>([]);
+    const plannedPath = useRef<any[]>([]);
+    const explorationMarkers = useRef<any>(null);
 
     useEffect(() => {
         const ros = RosConnection.getInstance();
@@ -124,11 +127,34 @@ export default function MapView() {
             });
         }
 
+        // 4. Path Subscription
+        const pathTopic = ros.createTopic('/planned_path', 'nav_msgs/Path');
+        if (pathTopic) {
+            pathTopic.subscribe((message: any) => {
+                plannedPath.current = message.poses.map((p: any) => ({
+                    x: p.pose.position.x,
+                    y: p.pose.position.y
+                }));
+                render();
+            });
+        }
+
+        // 5. Exploration Markers Subscription (Frontiers)
+        const explorationMarkersTopic = ros.createTopic('/exploration_markers', 'visualization_msgs/MarkerArray');
+        if (explorationMarkersTopic) {
+            explorationMarkersTopic.subscribe((message: any) => {
+                explorationMarkers.current = message;
+                render();
+            });
+        }
+
         return () => {
             cleanup();
             if (mapTopic) mapTopic.unsubscribe();
             if (odomTopic) odomTopic.unsubscribe();
             if (markersTopic) markersTopic.unsubscribe();
+            if (pathTopic) pathTopic.unsubscribe();
+            if (explorationMarkersTopic) explorationMarkersTopic.unsubscribe();
         };
     }, []);
 
@@ -153,20 +179,51 @@ export default function MapView() {
 
         // 1. Clear and Draw Map
         const imageData = ctx.createImageData(info.width, info.height);
-        for (let i = 0; i < data.length; i++) {
-            const val = data[i];
-            let r, g, b;
-            if (val === -1) { r = 240; g = 240; b = 245; }
-            else if (val === 0) { r = 255; g = 255; b = 255; }
-            else { r = 255; g = 59; b = 48; }
+        for (let y = 0; y < info.height; y++) {
+            for (let x = 0; x < info.width; x++) {
+                const rosIdx = y * info.width + x;
+                const val = data[rosIdx];
+                let r, g, b;
+                if (val === -1) { r = 240; g = 240; b = 245; }
+                else if (val === 0) { r = 255; g = 255; b = 255; }
+                else { r = 255; g = 59; b = 48; }
 
-            const idx = i * 4;
-            imageData.data[idx] = r;
-            imageData.data[idx + 1] = g;
-            imageData.data[idx + 2] = b;
-            imageData.data[idx + 3] = 255;
+                // Flip Y for Canvas (bottom-left to top-left)
+                const canvasIdx = ((info.height - 1 - y) * info.width + x) * 4;
+                imageData.data[canvasIdx] = r;
+                imageData.data[canvasIdx + 1] = g;
+                imageData.data[canvasIdx + 2] = b;
+                imageData.data[canvasIdx + 3] = 255;
+            }
         }
         ctx.putImageData(imageData, 0, 0);
+
+        // 2. Draw Exploration Markers (Frontiers)
+        if (explorationMarkers.current) {
+            explorationMarkers.current.markers.forEach((marker: any) => {
+                const pos = worldToMap(marker.pose.position.x || 0, marker.pose.position.y || 0, info);
+                // Type 7 = SPHERE_LIST (Frontiers)
+                if (marker.type === 7) {
+                    ctx.fillStyle = '#007AFF'; // Blue
+                    marker.points.forEach((p: any) => {
+                        const pointPos = worldToMap(p.x, p.y, info);
+                        ctx.beginPath();
+                        ctx.arc(pointPos.x, pointPos.y, 1.5, 0, 2 * Math.PI);
+                        ctx.fill();
+                    });
+                }
+                // Type 2 = SPHERE (Target)
+                else if (marker.type === 2 || marker.id === 10) {
+                    ctx.beginPath();
+                    ctx.fillStyle = '#FF9500'; // Orange Target
+                    ctx.arc(pos.x, pos.y, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+            });
+        }
 
         // 2. Draw Markers
         markers.current.forEach(marker => {
@@ -185,17 +242,35 @@ export default function MapView() {
             }
         });
 
+        // 2.5 Draw Planned Path
+        if (plannedPath.current.length > 1) {
+            ctx.beginPath();
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = '#007AFF'; // Blue
+            ctx.lineWidth = 1.5;
+
+            const startPos = worldToMap(plannedPath.current[0].x, plannedPath.current[0].y, info);
+            ctx.moveTo(startPos.x, startPos.y);
+
+            for (let i = 1; i < plannedPath.current.length; i++) {
+                const pos = worldToMap(plannedPath.current[i].x, plannedPath.current[i].y, info);
+                ctx.lineTo(pos.x, pos.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset for other drawings
+        }
+
         // 3. Draw Robot
         const robotPos = worldToMap(robotPose.current.x, robotPose.current.y, info);
         ctx.save();
         ctx.translate(robotPos.x, robotPos.y);
         ctx.rotate(-robotPose.current.yaw); // ROS yaw vs Canvas rotation
 
-        // Robot Triangle
+        // Robot Triangle - Smaller
         ctx.beginPath();
-        ctx.moveTo(8 / info.resolution / 10, 0);
-        ctx.lineTo(-6 / info.resolution / 10, 5 / info.resolution / 10);
-        ctx.lineTo(-6 / info.resolution / 10, -5 / info.resolution / 10);
+        ctx.moveTo(5, 0);
+        ctx.lineTo(-4, 3);
+        ctx.lineTo(-4, -3);
         ctx.closePath();
         ctx.fillStyle = theme.colors.primary;
         ctx.fill();
@@ -216,6 +291,9 @@ export default function MapView() {
             )}
             <Legend>
                 <LegendItem color={theme.colors.primary}>Robot Position</LegendItem>
+                <LegendItem color="#007AFF">Planned Path</LegendItem>
+                <LegendItem color="#007AFF" style={{ opacity: 0.7 }}>Discovered Frontiers</LegendItem>
+                <LegendItem color="#FF9500">Exploration Target</LegendItem>
                 <LegendItem color="#34C759">Human Detected</LegendItem>
                 <LegendItem color="rgba(255, 59, 48, 0.4)">Danger Zone</LegendItem>
             </Legend>
