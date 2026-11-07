@@ -3,8 +3,12 @@
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import RosConnection from '@/lib/ros/RosConnection';
-import { Navigation, Compass, Activity } from 'lucide-react';
+import { Navigation, Compass, Target, Activity } from 'lucide-react';
 import { theme } from '@/lib/theme';
+
+interface OdomStatsProps {
+    targetPoint?: { x: number; y: number } | null;
+}
 
 const Container = styled.div`
   background: white;
@@ -22,7 +26,7 @@ const Header = styled.div`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 `;
 
 const Title = styled.h3`
@@ -36,13 +40,13 @@ const Title = styled.h3`
 const StatRow = styled.div`
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 12px;
+  margin-bottom: 12px;
 `;
 
 const IconBox = styled.div`
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   background: ${theme.colors.background};
   border: 1px solid ${theme.colors.border};
   border-radius: ${theme.radius.md};
@@ -50,25 +54,27 @@ const IconBox = styled.div`
   align-items: center;
   justify-content: center;
   color: ${theme.colors.primary};
+  flex-shrink: 0;
 `;
 
 const Label = styled.div`
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 800;
   color: ${theme.colors.textLight};
   text-transform: uppercase;
 `;
 
 const Value = styled.div`
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 900;
   color: ${theme.colors.text};
+  line-height: 1.1;
 `;
 
-const StatusIndicator = styled.div<{ active: boolean }>`
-  font-size: 10px;
+const StatusIndicator = styled.div<{ $active: boolean }>`
+  font-size: 9px;
   font-weight: 900;
-  color: ${props => props.active ? theme.colors.primary : theme.colors.textLight};
+  color: ${props => props.$active ? theme.colors.primary : theme.colors.textLight};
   display: flex;
   align-items: center;
   gap: 6px;
@@ -78,11 +84,11 @@ const StatusIndicator = styled.div<{ active: boolean }>`
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: ${props => props.active ? theme.colors.primary : theme.colors.border};
+    background: ${props => props.$active ? theme.colors.success : theme.colors.border};
   }
 `;
 
-export default function OdomStats() {
+export default function OdomStats({ targetPoint }: OdomStatsProps) {
     const [odom, setOdom] = useState({ x: 0, y: 0, yaw: 0 });
     const [isConnected, setIsConnected] = useState(false);
 
@@ -110,33 +116,47 @@ export default function OdomStats() {
         };
     }, []);
 
+    const targetDist = targetPoint
+        ? Math.hypot(targetPoint.x - odom.x, targetPoint.y - odom.y).toFixed(2)
+        : null;
+
     return (
         <Container>
             <div>
                 <Header>
-                    <Title>Odometry_System</Title>
+                    <Title>ODOMETRY_UNIT</Title>
                     <Activity size={16} color={theme.colors.primary} />
                 </Header>
 
                 <StatRow>
-                    <IconBox><Navigation size={22} /></IconBox>
+                    <IconBox><Navigation size={18} /></IconBox>
                     <div>
-                        <Label>Position (X, Y)</Label>
+                        <Label>ROBOT POSITION (X, Y)</Label>
                         <Value>{odom.x.toFixed(2)}, {odom.y.toFixed(2)}</Value>
                     </div>
                 </StatRow>
 
                 <StatRow>
-                    <IconBox><Compass size={22} /></IconBox>
+                    <IconBox><Compass size={18} /></IconBox>
                     <div>
-                        <Label>Heading</Label>
+                        <Label>HEADING YAW</Label>
                         <Value>{odom.yaw}°</Value>
                     </div>
                 </StatRow>
+
+                {targetPoint && (
+                    <StatRow>
+                        <IconBox><Target size={18} /></IconBox>
+                        <div>
+                            <Label>WAYPOINT DISTANCE</Label>
+                            <Value>{targetDist} m</Value>
+                        </div>
+                    </StatRow>
+                )}
             </div>
 
-            <StatusIndicator active={isConnected}>
-                {isConnected ? 'NODE ACTIVE' : 'NODE OFFLINE'}
+            <StatusIndicator $active={isConnected}>
+                {isConnected ? 'TELEMETRY LIVE' : 'NODE STANDBY'}
             </StatusIndicator>
         </Container>
     );
