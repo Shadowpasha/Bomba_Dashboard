@@ -8,14 +8,14 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_bomba_nav2 = get_package_share_directory('bomba_nav2')
+    pkg_mrayap_nav2 = get_package_share_directory('mrayap_nav2')
     pkg_nav2_bringup = get_package_share_directory('nav2_bringup')
     pkg_slam_toolbox = get_package_share_directory('slam_toolbox')
 
     # Config file paths
-    nav2_params_file = os.path.join(pkg_bomba_nav2, 'config', 'nav2_params.yaml')
-    slam_params_file = os.path.join(pkg_bomba_nav2, 'config', 'slam_toolbox_params.yaml')
-    ekf_params_file = os.path.join(pkg_bomba_nav2, 'config', 'ekf.yaml')
+    nav2_params_file = os.path.join(pkg_mrayap_nav2, 'config', 'nav2_params.yaml')
+    slam_params_file = os.path.join(pkg_mrayap_nav2, 'config', 'slam_toolbox_params.yaml')
+    ekf_params_file = os.path.join(pkg_mrayap_nav2, 'config', 'ekf.yaml')
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
 
@@ -74,18 +74,18 @@ def generate_launch_description():
         }.items()
     )
 
-    # 6. Bomba Dashboard Helper Relays
+    # 6. Mrayap Dashboard Helper Relays
     telemetry_node = Node(
-        package='bomba_nav2',
+        package='mrayap_nav2',
         executable='telemetry_publisher',
-        name='bomba_telemetry_publisher',
+        name='mrayap_telemetry_publisher',
         output='screen'
     )
 
     path_relay_node = Node(
-        package='bomba_nav2',
+        package='mrayap_nav2',
         executable='path_relay',
-        name='bomba_path_relay',
+        name='mrayap_path_relay',
         output='screen'
     )
 

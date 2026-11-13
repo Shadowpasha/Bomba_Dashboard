@@ -7,7 +7,7 @@ from std_msgs.msg import Float32
 
 class TelemetryPublisher(Node):
     def __init__(self):
-        super().__init__('bomba_telemetry_publisher')
+        super().__init__('mrayap_telemetry_publisher')
 
         self.methane_pub = self.create_publisher(Float32, '/sensor/methane', 10)
         self.flammable_pub = self.create_publisher(Float32, '/sensor/flammable', 10)
@@ -20,7 +20,7 @@ class TelemetryPublisher(Node):
         self.base_air_quality = 30.0
         self.step = 0
 
-        self.get_logger().info('Bomba telemetry publisher initialized.')
+        self.get_logger().info('Mrayap telemetry publisher initialized.')
 
     def publish_telemetry(self):
         self.step += 1

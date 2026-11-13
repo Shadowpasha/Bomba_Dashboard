@@ -2,7 +2,7 @@ import os
 from glob import glob
 from setuptools import find_packages, setup
 
-package_name = 'bomba_nav2'
+package_name = 'mrayap_nav2'
 
 setup(
     name=package_name,
@@ -16,15 +16,15 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='Bomba Dev',
+    maintainer='Mrayap Dev',
     maintainer_email='developer@example.com',
-    description='ROS2 Humble bringup, SLAM mapping, and Nav2 navigation stack for Bomba Dashboard',
+    description='ROS2 Humble bringup, SLAM mapping, and Nav2 navigation stack for Mrayap Dashboard',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'telemetry_publisher = bomba_nav2.telemetry_publisher:main',
-            'path_relay = bomba_nav2.path_relay:main',
+            'telemetry_publisher = mrayap_nav2.telemetry_publisher:main',
+            'path_relay = mrayap_nav2.path_relay:main',
         ],
     },
 )

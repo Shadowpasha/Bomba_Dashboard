@@ -3,8 +3,8 @@ import "./globals.css";
 import StyledComponentsRegistry from "@/lib/StyledRegistry";
 
 export const metadata: Metadata = {
-  title: "Bomba OS | Robot Dashboard",
-  description: "Advanced ROS Robot Control Interface",
+  title: "Mrayap | Robot Inspection Dashboard",
+  description: "Advanced ROS Robot Hazardous Inspection Interface",
 };
 
 export default function RootLayout({

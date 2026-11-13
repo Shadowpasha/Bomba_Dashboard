@@ -3,9 +3,25 @@
 import React, { useState } from 'react';
 import styled from 'styled-components';
 import { Joystick } from 'react-joystick-component';
-import { Navigation2, RotateCcw, AlertTriangle, Send, XCircle, Home, Compass } from 'lucide-react';
+import {
+  Navigation2,
+  RotateCcw,
+  AlertTriangle,
+  Send,
+  XCircle,
+  Home,
+  Compass,
+  MapPin,
+  CheckCircle2,
+  Trash2,
+  SkipForward,
+  Save,
+  PlusCircle,
+  Play
+} from 'lucide-react';
 import { theme } from '@/lib/theme';
 import RosConnection from '@/lib/ros/RosConnection';
+import { InspectionWaypoint } from '@/lib/inspections';
 
 interface Point {
   x: number;
@@ -13,33 +29,43 @@ interface Point {
 }
 
 interface ManualControlProps {
-  mode?: 'manual' | 'p2p';
-  onModeChange?: (mode: 'manual' | 'p2p') => void;
+  mode?: 'manual' | 'autonomous';
+  onModeChange?: (mode: 'manual' | 'autonomous') => void;
   targetPoint?: Point | null;
   onClearTarget?: () => void;
   onSetTarget?: (point: Point) => void;
+  waypoints?: InspectionWaypoint[];
+  activeWaypointIndex?: number;
+  onAddWaypointAtRobot?: () => void;
+  onRemoveWaypoint?: (id: string) => void;
+  onClearWaypoints?: () => void;
+  onSkipWaypoint?: () => void;
   robotPose?: { x: number; y: number; yaw: number };
   isNavigating?: boolean;
   onStartNavigation?: () => void;
   onCancelNavigation?: () => void;
+  onCompleteInspection?: () => void;
+  hasSavedMap?: boolean;
+  isRecallMode?: boolean;
 }
 
 const Container = styled.div`
   background: white;
   border-radius: ${theme.radius.lg};
   border: 4px solid ${theme.colors.primary};
-  padding: 18px 20px;
+  padding: 16px 18px;
   height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   box-shadow: ${theme.shadows.medium};
   position: relative;
+  overflow: hidden;
 `;
 
 const Header = styled.div`
   width: 100%;
-  padding-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 2px solid ${theme.colors.border};
   display: flex;
   justify-content: space-between;
@@ -59,16 +85,16 @@ const ModeTabs = styled.div`
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   width: 100%;
-  margin: 10px 0;
+  margin: 8px 0;
 `;
 
 const ModeTabButton = styled.button<{ $active: boolean }>`
   background: ${props => props.$active ? theme.colors.primary : theme.colors.background};
   color: ${props => props.$active ? 'white' : theme.colors.text};
   border: 2px solid ${props => props.$active ? theme.colors.primary : theme.colors.border};
-  padding: 8px 10px;
+  padding: 7px 8px;
   border-radius: ${theme.radius.md};
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -84,30 +110,33 @@ const ModeTabButton = styled.button<{ $active: boolean }>`
   }
 `;
 
-const P2PPanel = styled.div`
+const PanelBody = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   flex: 1;
-  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
 `;
 
-const WaypointCard = styled.div`
+const Card = styled.div`
   background: ${theme.colors.background};
   border: 2px solid ${theme.colors.border};
   border-radius: ${theme.radius.md};
-  padding: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 `;
 
-const WaypointHeader = styled.div`
+const CardHeader = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
 `;
 
-const WaypointLabel = styled.div`
+const CardLabel = styled.div`
   font-size: 9px;
   font-weight: 900;
   color: ${theme.colors.textLight};
@@ -127,21 +156,21 @@ const StatusTag = styled.span<{ $color: string }>`
 const CoordinateGrid = styled.div`
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
 `;
 
 const CoordBox = styled.div`
   background: white;
   border: 1px solid ${theme.colors.border};
   border-radius: 6px;
-  padding: 6px 10px;
+  padding: 5px 8px;
   .axis {
     font-size: 8px;
     font-weight: 800;
     color: ${theme.colors.textLight};
   }
   .coord-val {
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 900;
     color: ${theme.colors.text};
   }
@@ -150,10 +179,9 @@ const CoordBox = styled.div`
 const MetricRow = styled.div`
   display: flex;
   justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 6px;
+  padding-top: 4px;
   border-top: 1px dashed ${theme.colors.border};
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 800;
   color: ${theme.colors.textLight};
 
@@ -163,12 +191,78 @@ const MetricRow = styled.div`
   }
 `;
 
+const WaypointListScroll = styled.div`
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 4px;
+`;
+
+const WaypointRow = styled.div<{ $active: boolean; $reached: boolean }>`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: ${props =>
+    props.$active
+      ? '#FF950015'
+      : props.$reached
+      ? '#34C75915'
+      : 'white'};
+  border: 1px solid ${props =>
+    props.$active
+      ? '#FF9500'
+      : props.$reached
+      ? '#34C759'
+      : theme.colors.border};
+  border-radius: 6px;
+  font-size: 8px;
+  font-weight: 800;
+`;
+
+const WaypointInfo = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  .order {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: ${theme.colors.text};
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: 900;
+  }
+  .coords {
+    color: ${theme.colors.text};
+  }
+`;
+
+const DeleteBtn = styled.button`
+  background: none;
+  border: none;
+  color: ${theme.colors.textLight};
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  &:hover {
+    color: ${theme.colors.primaryDark};
+  }
+`;
+
 const JoystickWrapper = styled.div`
   display: flex;
   align-items: center;
   justify-content: center;
   background: ${theme.colors.background};
-  padding: 14px;
+  padding: 10px;
   border-radius: 50%;
   border: 3px dashed ${theme.colors.border};
   margin: auto;
@@ -176,71 +270,86 @@ const JoystickWrapper = styled.div`
 
 const ActionButtonGroup = styled.div`
   display: flex;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  margin-top: 10px;
+  margin-top: 6px;
 `;
 
-const ActionButton = styled.button<{ $variant?: 'primary' | 'danger' | 'secondary' }>`
+const ActionButton = styled.button<{ $variant?: 'primary' | 'danger' | 'secondary' | 'success' }>`
   flex: 1;
   background: ${props =>
     props.$variant === 'secondary'
       ? theme.colors.background
       : props.$variant === 'danger'
       ? theme.colors.primaryDark
-      : theme.colors.success};
+      : props.$variant === 'success'
+      ? theme.colors.success
+      : theme.colors.primary};
   color: ${props => (props.$variant === 'secondary' ? theme.colors.text : 'white')};
   border: ${props => (props.$variant === 'secondary' ? `2px solid ${theme.colors.border}` : 'none')};
   border-radius: ${theme.radius.md};
-  padding: 12px 10px;
+  padding: 9px 8px;
   font-weight: 900;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 9px;
   letter-spacing: 0.5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   cursor: pointer;
   transition: all 0.2s;
-  box-shadow: ${props => (props.$variant === 'secondary' ? 'none' : '0 3px 0px rgba(0, 0, 0, 0.15)')};
 
   &:hover {
     filter: brightness(1.05);
   }
 
   &:active {
-    transform: translateY(2px);
-    box-shadow: none;
+    transform: translateY(1px);
   }
 
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    transform: none;
   }
 `;
 
+const NoticeBox = styled.div`
+  background: white;
+  border: 1px dashed ${theme.colors.border};
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 8px;
+  font-weight: 700;
+  color: ${theme.colors.textLight};
+  line-height: 1.3;
+  text-align: center;
+`;
+
 export default function ManualControl({
-  mode: controlledMode,
+  mode = 'manual',
   onModeChange,
-  targetPoint: controlledTarget,
+  targetPoint,
   onClearTarget,
   onSetTarget,
+  waypoints = [],
+  activeWaypointIndex = 0,
+  onAddWaypointAtRobot,
+  onRemoveWaypoint,
+  onClearWaypoints,
+  onSkipWaypoint,
   robotPose = { x: 0, y: 0, yaw: 0 },
-  isNavigating: controlledNavigating,
+  isNavigating = false,
   onStartNavigation,
-  onCancelNavigation
+  onCancelNavigation,
+  onCompleteInspection,
+  hasSavedMap = false,
+  isRecallMode = false,
 }: ManualControlProps) {
-  const [internalMode, setInternalMode] = useState<'manual' | 'p2p'>('p2p');
-  const [internalTarget, setInternalTarget] = useState<Point | null>(null);
-  const [internalNavigating, setInternalNavigating] = useState(false);
+  const [internalMode, setInternalMode] = useState<'manual' | 'autonomous'>('manual');
+  const currentMode = mode || internalMode;
 
-  const currentMode = controlledMode !== undefined ? controlledMode : internalMode;
-  const currentTarget = controlledTarget !== undefined ? controlledTarget : internalTarget;
-  const currentNavigating = controlledNavigating !== undefined ? controlledNavigating : internalNavigating;
-
-  const setMode = (newMode: 'manual' | 'p2p') => {
+  const setMode = (newMode: 'manual' | 'autonomous') => {
     if (onModeChange) onModeChange(newMode);
     else setInternalMode(newMode);
 
@@ -252,7 +361,7 @@ export default function ManualControl({
   };
 
   const handleMove = (event: any) => {
-    if (currentMode !== 'manual') return;
+    if (currentMode !== 'manual' || isRecallMode) return;
     const ros = RosConnection.getInstance();
     const cmdVel = ros.createTopic('/cmd_vel', 'geometry_msgs/Twist');
     if (cmdVel) {
@@ -264,7 +373,7 @@ export default function ManualControl({
   };
 
   const handleStop = () => {
-    if (currentMode !== 'manual') return;
+    if (currentMode !== 'manual' || isRecallMode) return;
     const ros = RosConnection.getInstance();
     const cmdVel = ros.createTopic('/cmd_vel', 'geometry_msgs/Twist');
     if (cmdVel) {
@@ -275,74 +384,10 @@ export default function ManualControl({
     }
   };
 
-  const handleDispatchWaypoint = () => {
-    if (!currentTarget) return;
-
-    if (onStartNavigation) {
-      onStartNavigation();
-    } else {
-      setInternalNavigating(true);
-    }
-
-    const ros = RosConnection.getInstance();
-
-    // 1. Publish standard ROS navigation goal (PoseStamped)
-    const goalTopic = ros.createTopic('/move_base_simple/goal', 'geometry_msgs/PoseStamped');
-    if (goalTopic) {
-      const angle = Math.atan2(currentTarget.y - robotPose.y, currentTarget.x - robotPose.x);
-      goalTopic.publish({
-        header: {
-          frame_id: 'map',
-          stamp: { sec: Math.floor(Date.now() / 1000), nsec: 0 }
-        },
-        pose: {
-          position: { x: currentTarget.x, y: currentTarget.y, z: 0 },
-          orientation: { x: 0, y: 0, z: Math.sin(angle / 2), w: Math.cos(angle / 2) }
-        }
-      });
-    }
-
-    // 2. Publish Nav2 / ROS2 goal compatibility
-    const goalPoseTopic = ros.createTopic('/goal_pose', 'geometry_msgs/PoseStamped');
-    if (goalPoseTopic) {
-      const angle = Math.atan2(currentTarget.y - robotPose.y, currentTarget.x - robotPose.x);
-      goalPoseTopic.publish({
-        header: {
-          frame_id: 'map',
-          stamp: { sec: Math.floor(Date.now() / 1000), nsec: 0 }
-        },
-        pose: {
-          position: { x: currentTarget.x, y: currentTarget.y, z: 0 },
-          orientation: { x: 0, y: 0, z: Math.sin(angle / 2), w: Math.cos(angle / 2) }
-        }
-      });
-    }
-
-    // 3. Trigger Point-to-Point control topic
-    const p2pStartTopic = ros.createTopic('/point_to_point/start', 'std_msgs/Bool');
-    if (p2pStartTopic) {
-      p2pStartTopic.publish({ data: true });
-    }
-  };
-
-  const handleCancelNavigation = () => {
-    if (onCancelNavigation) {
-      onCancelNavigation();
-    } else {
-      setInternalNavigating(false);
-    }
-
-    const ros = RosConnection.getInstance();
-    const cancelTopic = ros.createTopic('/point_to_point/cancel', 'std_msgs/Bool');
-    if (cancelTopic) {
-      cancelTopic.publish({ data: true });
-    }
-  };
-
   const handleReturnToBase = () => {
+    if (isRecallMode) return;
     const basePoint = { x: 0, y: 0 };
     if (onSetTarget) onSetTarget(basePoint);
-    else setInternalTarget(basePoint);
 
     const ros = RosConnection.getInstance();
     const emergencyTopic = ros.createTopic('/emergency_return', 'std_msgs/Bool');
@@ -350,7 +395,6 @@ export default function ManualControl({
       emergencyTopic.publish({ data: true });
     }
 
-    // Dispatch base as goal
     const goalTopic = ros.createTopic('/move_base_simple/goal', 'geometry_msgs/PoseStamped');
     if (goalTopic) {
       goalTopic.publish({
@@ -363,66 +407,76 @@ export default function ManualControl({
     }
 
     if (onStartNavigation) onStartNavigation();
-    else setInternalNavigating(true);
   };
+
+  const activeWP = waypoints[activeWaypointIndex] || null;
+  const currentTarget = activeWP ? { x: activeWP.x, y: activeWP.y } : targetPoint;
 
   const distance = currentTarget
     ? Math.hypot(currentTarget.x - robotPose.x, currentTarget.y - robotPose.y).toFixed(2)
     : '--';
 
   const bearing = currentTarget
-    ? Math.round(
-        (Math.atan2(currentTarget.y - robotPose.y, currentTarget.x - robotPose.x) * 180) / Math.PI
-      )
+    ? Math.round((Math.atan2(currentTarget.y - robotPose.y, currentTarget.x - robotPose.x) * 180) / Math.PI)
     : null;
 
   return (
     <Container>
       <Header>
-        <Title>MOTION_CONTROL_UNIT</Title>
-        <RotateCcw
-          size={16}
-          color={theme.colors.textLight}
-          style={{ cursor: 'pointer' }}
-          onClick={() => {
-            if (onClearTarget) onClearTarget();
-            else setInternalTarget(null);
-          }}
-        />
+        <Title>INSPECTION_CONTROL_UNIT</Title>
+        {onClearWaypoints && (
+          <span
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+            title="Reset waypoints"
+            onClick={onClearWaypoints}
+          >
+            <RotateCcw size={14} color={theme.colors.textLight} />
+          </span>
+        )}
       </Header>
 
       <ModeTabs>
-        <ModeTabButton $active={currentMode === 'p2p'} onClick={() => setMode('p2p')}>
-          <Navigation2 size={13} />
-          POINT TO POINT
+        <ModeTabButton
+          $active={currentMode === 'manual'}
+          onClick={() => setMode('manual')}
+          disabled={isRecallMode}
+        >
+          <Compass size={12} />
+          MANUAL SURVEY
         </ModeTabButton>
-        <ModeTabButton $active={currentMode === 'manual'} onClick={() => setMode('manual')}>
-          <Compass size={13} />
-          MANUAL DRIVE
+        <ModeTabButton
+          $active={currentMode === 'autonomous'}
+          onClick={() => setMode('autonomous')}
+          disabled={isRecallMode}
+        >
+          <Navigation2 size={12} />
+          AUTONOMOUS ({waypoints.length})
         </ModeTabButton>
       </ModeTabs>
 
-      {currentMode === 'p2p' ? (
-        <P2PPanel>
-          <WaypointCard>
-            <WaypointHeader>
-              <WaypointLabel>Target Waypoint</WaypointLabel>
+      {currentMode === 'autonomous' ? (
+        <PanelBody>
+          <Card>
+            <CardHeader>
+              <CardLabel>
+                {activeWP ? `Active: WP ${activeWP.order}` : 'Inspection Target'}
+              </CardLabel>
               <StatusTag
                 $color={
-                  currentNavigating
+                  isNavigating
+                    ? '#FF9500'
+                    : activeWP
                     ? theme.colors.primary
-                    : currentTarget
-                    ? theme.colors.success
                     : theme.colors.textLight
                 }
               >
-                {currentNavigating
-                  ? 'IN TRANSIT'
-                  : currentTarget
-                  ? 'TARGET LOCKED'
-                  : 'CLICK MAP TO SET'}
+                {isNavigating
+                  ? 'TRANSIT IN PROGRESS'
+                  : activeWP
+                  ? 'READY TO DISPATCH'
+                  : 'CLICK MAP TO ADD WP'}
               </StatusTag>
-            </WaypointHeader>
+            </CardHeader>
 
             <CoordinateGrid>
               <CoordBox>
@@ -440,43 +494,108 @@ export default function ManualControl({
             </CoordinateGrid>
 
             <MetricRow>
-              <span>DISTANCE TO GO:</span>
+              <span>DIST TO NEXT WP:</span>
               <span className="active-val">{distance} m</span>
             </MetricRow>
             <MetricRow>
               <span>TARGET BEARING:</span>
               <span className="active-val">{bearing !== null ? `${bearing}°` : '--'}</span>
             </MetricRow>
-          </WaypointCard>
+          </Card>
+
+          <WaypointListScroll>
+            {waypoints.length === 0 ? (
+              <NoticeBox>
+                {hasSavedMap
+                  ? 'Click anywhere on the map to define inspection waypoints for the robot to patrol.'
+                  : 'First deployment: perform a Manual Survey to generate the map, or click the map directly to place waypoints.'}
+              </NoticeBox>
+            ) : (
+              waypoints.map((wp, idx) => {
+                const isActive = idx === activeWaypointIndex;
+                const isReached = wp.status === 'reached';
+                return (
+                  <WaypointRow key={wp.id} $active={isActive} $reached={isReached}>
+                    <WaypointInfo>
+                      <div className="order">{isReached ? '✓' : wp.order}</div>
+                      <div className="coords">
+                        WP {wp.order} [{wp.x.toFixed(2)}, {wp.y.toFixed(2)}]
+                      </div>
+                    </WaypointInfo>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <StatusTag
+                        $color={
+                          isReached
+                            ? '#34C759'
+                            : isActive
+                            ? '#FF9500'
+                            : theme.colors.textLight
+                        }
+                      >
+                        {isReached ? 'DONE' : isActive ? 'NEXT' : 'QUEUED'}
+                      </StatusTag>
+                      {onRemoveWaypoint && !isRecallMode && (
+                        <DeleteBtn
+                          type="button"
+                          onClick={() => onRemoveWaypoint(wp.id)}
+                          title="Remove waypoint"
+                        >
+                          <Trash2 size={10} />
+                        </DeleteBtn>
+                      )}
+                    </div>
+                  </WaypointRow>
+                );
+              })
+            )}
+          </WaypointListScroll>
 
           <ActionButtonGroup>
-            {currentNavigating ? (
-              <ActionButton $variant="danger" onClick={handleCancelNavigation}>
-                <XCircle size={15} />
-                Abort Transit
+            {onAddWaypointAtRobot && !isRecallMode && (
+              <ActionButton
+                $variant="secondary"
+                onClick={onAddWaypointAtRobot}
+                title="Save current robot position as a waypoint"
+              >
+                <PlusCircle size={12} />
+                + Add at Robot
+              </ActionButton>
+            )}
+
+            {isNavigating ? (
+              <ActionButton $variant="danger" onClick={onCancelNavigation}>
+                <XCircle size={12} />
+                Pause Transit
               </ActionButton>
             ) : (
               <ActionButton
                 $variant="primary"
-                disabled={!currentTarget}
-                onClick={handleDispatchWaypoint}
+                disabled={waypoints.length === 0 || isRecallMode}
+                onClick={onStartNavigation}
               >
-                <Send size={15} />
-                Dispatch Goal
+                <Play size={12} />
+                Start Patrol
               </ActionButton>
             )}
 
-            <ActionButton $variant="secondary" onClick={handleReturnToBase}>
-              <Home size={15} />
-              Return Home
-            </ActionButton>
+            {onSkipWaypoint && isNavigating && (
+              <ActionButton $variant="secondary" onClick={onSkipWaypoint} title="Skip to next waypoint">
+                <SkipForward size={12} />
+              </ActionButton>
+            )}
           </ActionButtonGroup>
-        </P2PPanel>
+        </PanelBody>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+        <PanelBody style={{ justifyContent: 'center', alignItems: 'center' }}>
+          <NoticeBox style={{ marginBottom: 4 }}>
+            {!hasSavedMap
+              ? 'INITIAL MAPPING PHASE: Pilot robot manually using joystick or keyboard to map the environment and record baseline gas levels.'
+              : 'MANUAL RECONNAISSANCE: Manual override active. You can pilot the robot or drop inspection points at current locations.'}
+          </NoticeBox>
+
           <JoystickWrapper>
             <Joystick
-              size={110}
+              size={105}
               sticky={false}
               baseColor={theme.colors.background}
               stickColor={theme.colors.primary}
@@ -486,16 +605,34 @@ export default function ManualControl({
           </JoystickWrapper>
 
           <ActionButtonGroup>
+            {onAddWaypointAtRobot && !isRecallMode && (
+              <ActionButton $variant="secondary" onClick={onAddWaypointAtRobot}>
+                <MapPin size={12} />
+                Drop WP
+              </ActionButton>
+            )}
             <ActionButton $variant="danger" onClick={handleStop}>
-              <AlertTriangle size={15} />
-              Emergency Stop
+              <AlertTriangle size={12} />
+              Stop
             </ActionButton>
             <ActionButton $variant="secondary" onClick={handleReturnToBase}>
-              <Home size={15} />
+              <Home size={12} />
               Base
             </ActionButton>
           </ActionButtonGroup>
-        </div>
+        </PanelBody>
+      )}
+
+      {onCompleteInspection && !isRecallMode && (
+        <ActionButton
+          $variant="success"
+          style={{ marginTop: 8 }}
+          onClick={onCompleteInspection}
+          title="Save the current map, gas heatmaps, and inspection metrics"
+        >
+          <Save size={12} />
+          Complete & Save Inspection Cycle
+        </ActionButton>
       )}
     </Container>
   );

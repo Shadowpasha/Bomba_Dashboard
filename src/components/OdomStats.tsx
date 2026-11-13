@@ -3,18 +3,22 @@
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import RosConnection from '@/lib/ros/RosConnection';
-import { Navigation, Compass, Target, Activity } from 'lucide-react';
+import { Navigation, Compass, Target, Activity, Clock, Route } from 'lucide-react';
 import { theme } from '@/lib/theme';
 
 interface OdomStatsProps {
     targetPoint?: { x: number; y: number } | null;
+    cycleNumber?: number;
+    distanceMeters?: number;
+    durationSeconds?: number;
+    isRecallMode?: boolean;
 }
 
 const Container = styled.div`
   background: white;
   border-radius: ${theme.radius.lg};
   border-left: 6px solid ${theme.colors.primary};
-  padding: 16px;
+  padding: 14px 16px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -26,27 +30,27 @@ const Header = styled.div`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 `;
 
 const Title = styled.h3`
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 2px;
+  letter-spacing: 1.5px;
   color: ${theme.colors.primary};
 `;
 
 const StatRow = styled.div`
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 8px;
 `;
 
 const IconBox = styled.div`
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   background: ${theme.colors.background};
   border: 1px solid ${theme.colors.border};
   border-radius: ${theme.radius.md};
@@ -58,21 +62,22 @@ const IconBox = styled.div`
 `;
 
 const Label = styled.div`
-  font-size: 8px;
+  font-size: 7.5px;
   font-weight: 800;
   color: ${theme.colors.textLight};
   text-transform: uppercase;
+  letter-spacing: 0.4px;
 `;
 
 const Value = styled.div`
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 900;
   color: ${theme.colors.text};
   line-height: 1.1;
 `;
 
 const StatusIndicator = styled.div<{ $active: boolean }>`
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 900;
   color: ${props => props.$active ? theme.colors.primary : theme.colors.textLight};
   display: flex;
@@ -88,7 +93,19 @@ const StatusIndicator = styled.div<{ $active: boolean }>`
   }
 `;
 
-export default function OdomStats({ targetPoint }: OdomStatsProps) {
+function formatDuration(sec: number): string {
+    const mins = Math.floor(sec / 60);
+    const secs = sec % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+export default function OdomStats({
+    targetPoint,
+    cycleNumber = 1,
+    distanceMeters = 0,
+    durationSeconds = 0,
+    isRecallMode = false,
+}: OdomStatsProps) {
     const [odom, setOdom] = useState({ x: 0, y: 0, yaw: 0 });
     const [isConnected, setIsConnected] = useState(false);
 
@@ -124,20 +141,36 @@ export default function OdomStats({ targetPoint }: OdomStatsProps) {
         <Container>
             <div>
                 <Header>
-                    <Title>ODOMETRY_UNIT</Title>
-                    <Activity size={16} color={theme.colors.primary} />
+                    <Title>CYCLE #{cycleNumber} ODOMETRY</Title>
+                    <Activity size={14} color={theme.colors.primary} />
                 </Header>
 
                 <StatRow>
-                    <IconBox><Navigation size={18} /></IconBox>
+                    <IconBox><Clock size={16} /></IconBox>
                     <div>
-                        <Label>ROBOT POSITION (X, Y)</Label>
+                        <Label>INSPECTION DURATION</Label>
+                        <Value>{formatDuration(durationSeconds)}</Value>
+                    </div>
+                </StatRow>
+
+                <StatRow>
+                    <IconBox><Route size={16} /></IconBox>
+                    <div>
+                        <Label>DISTANCE TRAVERSED</Label>
+                        <Value>{distanceMeters.toFixed(1)} m</Value>
+                    </div>
+                </StatRow>
+
+                <StatRow>
+                    <IconBox><Navigation size={16} /></IconBox>
+                    <div>
+                        <Label>ROBOT POSE (X, Y)</Label>
                         <Value>{odom.x.toFixed(2)}, {odom.y.toFixed(2)}</Value>
                     </div>
                 </StatRow>
 
                 <StatRow>
-                    <IconBox><Compass size={18} /></IconBox>
+                    <IconBox><Compass size={16} /></IconBox>
                     <div>
                         <Label>HEADING YAW</Label>
                         <Value>{odom.yaw}°</Value>
@@ -146,17 +179,21 @@ export default function OdomStats({ targetPoint }: OdomStatsProps) {
 
                 {targetPoint && (
                     <StatRow>
-                        <IconBox><Target size={18} /></IconBox>
+                        <IconBox><Target size={16} /></IconBox>
                         <div>
-                            <Label>WAYPOINT DISTANCE</Label>
+                            <Label>TARGET DISTANCE</Label>
                             <Value>{targetDist} m</Value>
                         </div>
                     </StatRow>
                 )}
             </div>
 
-            <StatusIndicator $active={isConnected}>
-                {isConnected ? 'TELEMETRY LIVE' : 'NODE STANDBY'}
+            <StatusIndicator $active={isConnected && !isRecallMode}>
+                {isRecallMode
+                    ? 'HISTORICAL ARCHIVE'
+                    : isConnected
+                    ? 'TELEMETRY LIVE'
+                    : 'NODE STANDBY'}
             </StatusIndicator>
         </Container>
     );

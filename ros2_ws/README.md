@@ -1,6 +1,6 @@
-# Bomba ROS 2 Humble Navigation Package
+# Mrayap ROS 2 Humble Navigation Package
 
-This package bridges your robot hardware (Lidar, wheel encoders/odometry, gas sensors) to the Bomba Dashboard web application via Rosbridge.
+This package bridges your robot hardware (Lidar, wheel encoders/odometry, gas sensors) to the Mrayap Dashboard web application via Rosbridge.
 
 ## Architecture & Topic Mapping
 
@@ -31,8 +31,8 @@ This package bridges your robot hardware (Lidar, wheel encoders/odometry, gas se
    source install/setup.bash
 
 4. Launch the entire system:
-   ros2 launch bomba_nav2 bomba_system.launch.py
+   ros2 launch mrayap_nav2 mrayap_system.launch.py
 
-5. Start the Bomba Next.js Dashboard:
+5. Start the Mrayap Next.js Dashboard:
    npm run dev
 

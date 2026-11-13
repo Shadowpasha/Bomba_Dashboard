@@ -6,7 +6,7 @@ from geometry_msgs.msg import PoseStamped
 
 class PathRelay(Node):
     def __init__(self):
-        super().__init__('bomba_path_relay')
+        super().__init__('mrayap_path_relay')
 
         # Relay Nav2 global plan to dashboard planned_path topic
         self.path_sub = self.create_subscription(
@@ -26,7 +26,7 @@ class PathRelay(Node):
         )
         self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
 
-        self.get_logger().info('Bomba Path and Goal relay initialized.')
+        self.get_logger().info('Mrayap Path and Goal relay initialized.')
 
     def plan_callback(self, msg: Path):
         self.path_pub.publish(msg)

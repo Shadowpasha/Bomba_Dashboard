@@ -4,25 +4,45 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import styled from 'styled-components';
 import RosConnection from '@/lib/ros/RosConnection';
 import { theme } from '@/lib/theme';
-import { Crosshair, MapPin } from 'lucide-react';
+import { Crosshair, MapPin, Layers, Trash2, History, CheckCircle2, Navigation, AlertCircle } from 'lucide-react';
+import {
+    GAS_SENSORS,
+    GasSensorId,
+    GasHeatmapStores,
+    createEmptyHeatmapStores,
+    recordGasSample,
+    renderSensorHeatmapLayer,
+    deserializeHeatmapStores,
+    serializeHeatmapStores,
+    GasSampleCell,
+} from '@/lib/gasHeatmap';
+import { InspectionRecord, InspectionWaypoint, SavedOccupancyMap } from '@/lib/inspections';
 
 interface Point {
     x: number;
     y: number;
 }
 
-interface MapViewProps {
-    mode?: 'manual' | 'p2p';
+export interface MapViewProps {
+    mode?: 'manual' | 'p2p' | 'autonomous';
     targetPoint?: Point | null;
     onSetTarget?: (point: Point) => void;
+    waypoints?: InspectionWaypoint[];
+    activeWaypointIndex?: number;
+    onAddWaypoint?: (point: Point) => void;
     robotPose?: { x: number; y: number; yaw: number };
     isNavigating?: boolean;
+    savedMap?: SavedOccupancyMap | null;
+    recallInspection?: InspectionRecord | null;
+    isRecallMode?: boolean;
+    liveHeatmapStoresRef?: React.MutableRefObject<GasHeatmapStores | null>;
+    onLiveMapUpdate?: (map: SavedOccupancyMap) => void;
 }
 
-const Container = styled.div<{ $isP2P: boolean }>`
+const Container = styled.div<{ $isClickable: boolean; $isRecall: boolean }>`
   background: white;
   border-radius: ${theme.radius.lg};
-  border: 2px solid ${theme.colors.border};
+  border: ${props => props.$isRecall ? `3px solid #007AFF` : `2px solid ${theme.colors.border}`};
   overflow: hidden;
   position: relative;
   width: 100%;
@@ -32,7 +52,7 @@ const Container = styled.div<{ $isP2P: boolean }>`
   justify-content: center;
   padding: 16px;
   box-shadow: ${theme.shadows.soft};
-  cursor: ${props => props.$isP2P ? 'crosshair' : 'default'};
+  cursor: ${props => props.$isClickable ? 'crosshair' : 'default'};
 `;
 
 const CanvasWrapper = styled.div`
@@ -54,31 +74,37 @@ const Canvas = styled.canvas`
   display: block;
 `;
 
-const Badge = styled.div`
+const Badge = styled.div<{ $recall?: boolean }>`
   position: absolute;
   top: 12px;
   left: 12px;
-  background: ${theme.colors.text};
+  background: ${props => props.$recall ? '#007AFF' : theme.colors.text};
   color: white;
-  padding: 5px 12px;
+  padding: 6px 14px;
   border-radius: ${theme.radius.sm};
   font-size: 9px;
   font-weight: 800;
   text-transform: uppercase;
   z-index: 10;
-  border-left: 3px solid ${theme.colors.primary};
+  border-left: 3px solid ${props => props.$recall ? '#5AC8FA' : theme.colors.primary};
   display: flex;
   align-items: center;
   gap: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 `;
 
-const ModeHint = styled.div`
+const ModeHint = styled.div<{ $variant?: 'warning' | 'info' | 'success' }>`
   position: absolute;
   top: 12px;
   right: 12px;
-  background: rgba(255, 149, 0, 0.95);
+  background: ${props =>
+    props.$variant === 'info'
+      ? '#007AFF'
+      : props.$variant === 'success'
+      ? '#34C759'
+      : 'rgba(255, 149, 0, 0.95)'};
   color: white;
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: ${theme.radius.sm};
   font-size: 9px;
   font-weight: 800;
@@ -88,7 +114,7 @@ const ModeHint = styled.div`
   align-items: center;
   gap: 6px;
   z-index: 10;
-  box-shadow: 0 2px 6px rgba(255, 149, 0, 0.3);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 `;
 
 const Legend = styled.div`
@@ -122,29 +148,201 @@ const LegendItem = styled.div<{ $color: string }>`
   }
 `;
 
+const HeatmapPanel = styled.div`
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid ${theme.colors.border};
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  cursor: default;
+  min-width: 180px;
+`;
+
+const HeatmapHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid ${theme.colors.border};
+`;
+
+const HeatmapTitle = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 8px;
+  font-weight: 900;
+  color: ${theme.colors.text};
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+`;
+
+const HeatmapActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+`;
+
+const SmallActionButton = styled.button`
+  background: ${theme.colors.background};
+  border: 1px solid ${theme.colors.border};
+  border-radius: 4px;
+  color: ${theme.colors.textLight};
+  font-size: 7px;
+  font-weight: 900;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.15s ease;
+
+  &:hover {
+    border-color: ${theme.colors.text};
+    color: ${theme.colors.text};
+  }
+`;
+
+const SensorToggleList = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+`;
+
+const SensorToggleButton = styled.button<{ $active: boolean; $color: string }>`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 7px;
+  border-radius: 4px;
+  border: 1px solid ${props => props.$active ? props.$color : theme.colors.border};
+  background: ${props => props.$active ? `${props.$color}18` : theme.colors.background};
+  color: ${theme.colors.text};
+  opacity: ${props => props.$active ? 1 : 0.6};
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 800;
+  transition: all 0.15s ease;
+
+  &:hover {
+    opacity: 1;
+    border-color: ${props => props.$color};
+  }
+`;
+
+const SensorToggleLeft = styled.span`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+`;
+
+const ColorSwatch = styled.span<{ $active: boolean; $color: string }>`
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: ${props => props.$active ? props.$color : 'transparent'};
+  border: 2px solid ${props => props.$color};
+  flex-shrink: 0;
+`;
+
+const SensorReadingText = styled.span`
+  font-size: 8px;
+  font-weight: 800;
+  color: ${theme.colors.textLight};
+`;
+
+const FALLBACK_MAP_INFO = {
+    width: 400,
+    height: 400,
+    resolution: 0.05,
+    origin: { position: { x: -10, y: -10 } }
+};
+
 export default function MapView({
-    mode = 'p2p',
+    mode = 'manual',
     targetPoint = null,
     onSetTarget,
+    waypoints = [],
+    activeWaypointIndex = 0,
+    onAddWaypoint,
     robotPose: externalRobotPose,
-    isNavigating = false
+    isNavigating = false,
+    savedMap = null,
+    recallInspection = null,
+    isRecallMode = false,
+    liveHeatmapStoresRef,
+    onLiveMapUpdate,
 }: MapViewProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [isConnected, setIsConnected] = useState(false);
-    const mapData = useRef<any>(null);
+    const [visibleHeatmaps, setVisibleHeatmaps] = useState<Record<GasSensorId, boolean>>({
+        methane: true,
+        flammable: true,
+        airQuality: true,
+    });
+    const [latestGasValues, setLatestGasValues] = useState<Record<GasSensorId, number | null>>({
+        methane: null,
+        flammable: null,
+        airQuality: null,
+    });
+
+    const liveMapData = useRef<SavedOccupancyMap | null>(null);
     const internalRobotPose = useRef({ x: 0, y: 0, yaw: 0 });
     const markers = useRef<any[]>([]);
     const plannedPath = useRef<Point[]>([]);
     const hoverCoordsRef = useRef<Point | null>(null);
 
-    const activePose = externalRobotPose || internalRobotPose.current;
+    const gasHeatmapsRef = useRef<GasHeatmapStores>(createEmptyHeatmapStores());
+    const latestGasRef = useRef<Record<GasSensorId, number | null>>({
+        methane: null,
+        flammable: null,
+        airQuality: null,
+    });
+    const lastRecordedPoseRef = useRef<{ x: number; y: number } | null>(null);
+    const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-    const fallbackInfo = {
-        width: 400,
-        height: 400,
-        resolution: 0.05,
-        origin: { position: { x: -10, y: -10 } }
-    };
+    // Sync live heatmaps reference for parent component to access when saving inspection
+    useEffect(() => {
+        if (liveHeatmapStoresRef) {
+            liveHeatmapStoresRef.current = gasHeatmapsRef.current;
+        }
+    }, [liveHeatmapStoresRef]);
+
+    const activePose = externalRobotPose || internalRobotPose.current;
+    const activePoseRef = useRef(activePose);
+    activePoseRef.current = activePose;
+
+    const stampPoseWithLatestGas = useCallback((x: number, y: number) => {
+        if (isRecallMode) return;
+        const last = lastRecordedPoseRef.current;
+        if (last && Math.hypot(x - last.x, y - last.y) < 0.12) {
+            return;
+        }
+
+        let stampedAny = false;
+        for (const sensor of GAS_SENSORS) {
+            const val = latestGasRef.current[sensor.id];
+            if (val !== null) {
+                recordGasSample(gasHeatmapsRef.current[sensor.id], x, y, val);
+                stampedAny = true;
+            }
+        }
+
+        if (stampedAny) {
+            lastRecordedPoseRef.current = { x, y };
+        }
+    }, [isRecallMode]);
 
     const worldToMap = useCallback((worldX: number, worldY: number, info: any) => {
         const mapX = (worldX - info.origin.position.x) / info.resolution;
@@ -178,7 +376,6 @@ export default function MapView({
         let offsetX = 0;
         let offsetY = 0;
 
-        // When the canvas element aspect ratio differs from internal canvas resolution
         if (Math.abs(elementRatio - contentRatio) > 0.001) {
             if (elementRatio > contentRatio) {
                 renderedHeight = rect.height;
@@ -209,15 +406,25 @@ export default function MapView({
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        const info = mapData.current ? mapData.current.info : fallbackInfo;
+        // Determine effective map source: recall inspection map > live ROS map > saved base map
+        let effectiveMap: SavedOccupancyMap | null = null;
+        if (isRecallMode && recallInspection?.savedMap) {
+            effectiveMap = recallInspection.savedMap;
+        } else if (liveMapData.current) {
+            effectiveMap = liveMapData.current;
+        } else if (savedMap) {
+            effectiveMap = savedMap;
+        }
+
+        const info = effectiveMap ? effectiveMap.info : FALLBACK_MAP_INFO;
         if (canvas.width !== info.width || canvas.height !== info.height) {
             canvas.width = info.width;
             canvas.height = info.height;
         }
 
         // 1. Draw Map (or synthetic tactical grid)
-        if (mapData.current) {
-            const data = mapData.current.data;
+        if (effectiveMap && effectiveMap.data && effectiveMap.data.length > 0) {
+            const data = effectiveMap.data;
             const imageData = ctx.createImageData(info.width, info.height);
             for (let y = 0; y < info.height; y++) {
                 for (let x = 0; x < info.width; x++) {
@@ -237,7 +444,7 @@ export default function MapView({
             }
             ctx.putImageData(imageData, 0, 0);
         } else {
-            // Tactical grid for standby / development mode
+            // Tactical grid for initial inspection standby
             ctx.fillStyle = '#FAFBFC';
             ctx.fillRect(0, 0, info.width, info.height);
 
@@ -269,6 +476,32 @@ export default function MapView({
             ctx.stroke();
         }
 
+        // 1b. Gas Sensor Heatmap Overlays
+        // If in recall mode, render historical deserialized heatmap stores; else live stores
+        let activeHeatmapStores: GasHeatmapStores;
+        if (isRecallMode && recallInspection?.gasHeatmaps) {
+            activeHeatmapStores = deserializeHeatmapStores(recallInspection.gasHeatmaps);
+        } else {
+            activeHeatmapStores = gasHeatmapsRef.current;
+        }
+
+        if (typeof document !== 'undefined') {
+            if (!offscreenCanvasRef.current) {
+                offscreenCanvasRef.current = document.createElement('canvas');
+            }
+            for (const sensor of GAS_SENSORS) {
+                if (!visibleHeatmaps[sensor.id]) continue;
+                renderSensorHeatmapLayer(
+                    ctx,
+                    activeHeatmapStores[sensor.id],
+                    sensor,
+                    info,
+                    offscreenCanvasRef.current,
+                    worldToMap
+                );
+            }
+        }
+
         // 2. Markers (Humans / Hazards)
         markers.current.forEach(marker => {
             const pos = worldToMap(marker.x, marker.y, info);
@@ -288,7 +521,7 @@ export default function MapView({
         });
 
         // 3. Planned Path from ROS
-        if (plannedPath.current.length > 1) {
+        if (plannedPath.current.length > 1 && !isRecallMode) {
             ctx.beginPath();
             ctx.setLineDash([4, 4]);
             ctx.strokeStyle = '#007AFF';
@@ -303,8 +536,104 @@ export default function MapView({
             ctx.setLineDash([]);
         }
 
-        // 4. Hover Reticle in Point-to-Point Mode
-        if (mode === 'p2p' && hoverCoordsRef.current) {
+        // 4. Autonomous Inspection Waypoint Route & Pins
+        const displayWaypoints = isRecallMode && recallInspection?.waypoints
+            ? recallInspection.waypoints
+            : waypoints;
+
+        if (displayWaypoints && displayWaypoints.length > 0) {
+            // 4a. Connect waypoints with dotted inspection route lines
+            if (displayWaypoints.length > 1) {
+                ctx.beginPath();
+                ctx.setLineDash([5, 4]);
+                ctx.strokeStyle = '#FF9500';
+                ctx.lineWidth = 2;
+                const firstPos = worldToMap(displayWaypoints[0].x, displayWaypoints[0].y, info);
+                ctx.moveTo(firstPos.x, firstPos.y);
+                for (let i = 1; i < displayWaypoints.length; i++) {
+                    const nextPos = worldToMap(displayWaypoints[i].x, displayWaypoints[i].y, info);
+                    ctx.lineTo(nextPos.x, nextPos.y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // 4b. Draw approach line from robot to active waypoint in live mode
+            if (!isRecallMode && displayWaypoints[activeWaypointIndex]) {
+                const currentWP = displayWaypoints[activeWaypointIndex];
+                const activeWpPos = worldToMap(currentWP.x, currentWP.y, info);
+                const robotPos = worldToMap(activePose.x, activePose.y, info);
+                ctx.beginPath();
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = '#FF9500';
+                ctx.lineWidth = 1.5;
+                ctx.moveTo(robotPos.x, robotPos.y);
+                ctx.lineTo(activeWpPos.x, activeWpPos.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // 4c. Draw waypoint nodes
+            displayWaypoints.forEach((wp, index) => {
+                const wpPos = worldToMap(wp.x, wp.y, info);
+                const isCurrent = !isRecallMode && index === activeWaypointIndex;
+                const isReached = wp.status === 'reached';
+
+                // Node background circle
+                ctx.beginPath();
+                ctx.arc(wpPos.x, wpPos.y, isCurrent ? 12 : 9, 0, 2 * Math.PI);
+
+                if (isReached) {
+                    ctx.fillStyle = '#34C759';
+                } else if (isCurrent) {
+                    ctx.fillStyle = '#FF9500';
+                } else {
+                    ctx.fillStyle = '#1C1C1E';
+                }
+                ctx.fill();
+
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Outer halo for current active waypoint
+                if (isCurrent) {
+                    ctx.beginPath();
+                    ctx.arc(wpPos.x, wpPos.y, 16, 0, 2 * Math.PI);
+                    ctx.strokeStyle = 'rgba(255, 149, 0, 0.4)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+
+                // Waypoint number text
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 9px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(isReached ? '✓' : String(wp.order || index + 1), wpPos.x, wpPos.y);
+
+                // Waypoint coordinate badge
+                ctx.font = 'bold 8px sans-serif';
+                ctx.fillStyle = '#1C1C1E';
+                ctx.textAlign = 'left';
+                ctx.fillText(`WP ${wp.order || index + 1} [${wp.x.toFixed(1)}, ${wp.y.toFixed(1)}]`, wpPos.x + 14, wpPos.y - 4);
+            });
+        }
+
+        // 5. Point-to-Point Target if set independently
+        if (targetPoint && !isRecallMode) {
+            const targetPos = worldToMap(targetPoint.x, targetPoint.y, info);
+            ctx.beginPath();
+            ctx.arc(targetPos.x, targetPos.y, 10, 0, 2 * Math.PI);
+            ctx.fillStyle = 'rgba(255, 149, 0, 0.2)';
+            ctx.fill();
+            ctx.strokeStyle = '#FF9500';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        // 6. Hover Reticle in Waypoint / Autonomous Mode
+        if ((mode === 'autonomous' || mode === 'p2p') && hoverCoordsRef.current && !isRecallMode) {
             const hPos = worldToMap(hoverCoordsRef.current.x, hoverCoordsRef.current.y, info);
             ctx.beginPath();
             ctx.arc(hPos.x, hPos.y, 7, 0, 2 * Math.PI);
@@ -314,7 +643,6 @@ export default function MapView({
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // Crosshair lines
             ctx.beginPath();
             ctx.strokeStyle = 'rgba(255, 149, 0, 0.6)';
             ctx.moveTo(hPos.x - 10, hPos.y);
@@ -324,62 +652,32 @@ export default function MapView({
             ctx.stroke();
         }
 
-        // 5. Point-to-Point Waypoint Target & Direct Vector
-        if (targetPoint) {
-            const targetPos = worldToMap(targetPoint.x, targetPoint.y, info);
+        // 7. Draw Robot Pose (only in live mode)
+        if (!isRecallMode) {
             const robotPos = worldToMap(activePose.x, activePose.y, info);
+            ctx.save();
+            ctx.translate(robotPos.x, robotPos.y);
+            ctx.rotate(-activePose.yaw);
 
-            // Draw approach vector from robot to target
             ctx.beginPath();
-            ctx.setLineDash([5, 5]);
-            ctx.strokeStyle = '#FF9500';
-            ctx.lineWidth = 1.5;
-            ctx.moveTo(robotPos.x, robotPos.y);
-            ctx.lineTo(targetPos.x, targetPos.y);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Outer target pulse circle
-            ctx.beginPath();
-            ctx.arc(targetPos.x, targetPos.y, 10, 0, 2 * Math.PI);
-            ctx.fillStyle = 'rgba(255, 149, 0, 0.2)';
+            ctx.moveTo(8, 0);
+            ctx.lineTo(-6, 5);
+            ctx.lineTo(-6, -5);
+            ctx.closePath();
+            ctx.fillStyle = theme.colors.primary;
             ctx.fill();
-            ctx.strokeStyle = '#FF9500';
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1.2;
             ctx.stroke();
 
-            // Inner target crosshair
-            ctx.beginPath();
-            ctx.arc(targetPos.x, targetPos.y, 3, 0, 2 * Math.PI);
-            ctx.fillStyle = '#FF9500';
-            ctx.fill();
-
-            // Target Waypoint Label
-            ctx.fillStyle = '#1C1C1E';
-            ctx.font = 'bold 9px sans-serif';
-            ctx.fillText(`WP [${targetPoint.x.toFixed(1)}, ${targetPoint.y.toFixed(1)}]`, targetPos.x + 12, targetPos.y - 4);
+            ctx.restore();
         }
+    }, [activePose, targetPoint, mode, waypoints, activeWaypointIndex, worldToMap, visibleHeatmaps, savedMap, recallInspection, isRecallMode]);
 
-        // 6. Draw Robot Pose
-        const robotPos = worldToMap(activePose.x, activePose.y, info);
-        ctx.save();
-        ctx.translate(robotPos.x, robotPos.y);
-        ctx.rotate(-activePose.yaw);
+    const renderRef = useRef(render);
+    renderRef.current = render;
 
-        ctx.beginPath();
-        ctx.moveTo(7, 0);
-        ctx.lineTo(-5, 4);
-        ctx.lineTo(-5, -4);
-        ctx.closePath();
-        ctx.fillStyle = theme.colors.primary;
-        ctx.fill();
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-
-        ctx.restore();
-    }, [activePose, targetPoint, mode, worldToMap]);
-
+    // ROS topic subscriptions for live inspection mode
     useEffect(() => {
         const ros = RosConnection.getInstance();
         const cleanup = ros.subscribeStatus(setIsConnected);
@@ -387,8 +685,14 @@ export default function MapView({
         const mapTopic = ros.createTopic('/map', 'nav_msgs/OccupancyGrid');
         if (mapTopic) {
             mapTopic.subscribe((message: any) => {
-                mapData.current = message;
-                render();
+                liveMapData.current = message;
+                if (onLiveMapUpdate) {
+                    onLiveMapUpdate({
+                        info: message.info,
+                        data: Array.from(message.data),
+                    });
+                }
+                renderRef.current();
             });
         }
 
@@ -398,12 +702,15 @@ export default function MapView({
                 const pose = message.pose.pose;
                 const q = pose.orientation;
                 const yaw = Math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-                internalRobotPose.current = {
+                const nextPose = {
                     x: pose.position.x,
                     y: pose.position.y,
                     yaw: yaw
                 };
-                render();
+                internalRobotPose.current = nextPose;
+                activePoseRef.current = nextPose;
+                stampPoseWithLatestGas(nextPose.x, nextPose.y);
+                renderRef.current();
             });
         }
 
@@ -415,7 +722,7 @@ export default function MapView({
                     const index = markers.current.findIndex(m => m.id === newMarker.id);
                     if (index > -1) markers.current[index] = newMarker;
                     else markers.current.push(newMarker);
-                    render();
+                    renderRef.current();
                 } catch (e) {
                     console.error("Failed to parse marker:", e);
                 }
@@ -429,11 +736,28 @@ export default function MapView({
                     x: p.pose.position.x,
                     y: p.pose.position.y
                 }));
-                render();
+                renderRef.current();
             });
         }
 
-        render();
+        const sensorTopics = GAS_SENSORS.map(sensor => {
+            const topic = ros.createTopic(sensor.topic, 'std_msgs/Float32');
+            if (topic) {
+                topic.subscribe((message: any) => {
+                    if (typeof message.data === 'number' && Number.isFinite(message.data)) {
+                        const val = message.data;
+                        latestGasRef.current[sensor.id] = val;
+                        setLatestGasValues(prev => ({ ...prev, [sensor.id]: val }));
+                        const pose = activePoseRef.current;
+                        recordGasSample(gasHeatmapsRef.current[sensor.id], pose.x, pose.y, val);
+                        renderRef.current();
+                    }
+                });
+            }
+            return topic;
+        });
+
+        renderRef.current();
 
         return () => {
             cleanup();
@@ -441,15 +765,48 @@ export default function MapView({
             if (odomTopic) odomTopic.unsubscribe();
             if (markersTopic) markersTopic.unsubscribe();
             if (pathTopic) pathTopic.unsubscribe();
+            sensorTopics.forEach(topic => {
+                if (topic) topic.unsubscribe();
+            });
         };
-    }, [render]);
+    }, [stampPoseWithLatestGas, onLiveMapUpdate]);
 
     useEffect(() => {
+        if (externalRobotPose) {
+            stampPoseWithLatestGas(externalRobotPose.x, externalRobotPose.y);
+        }
         render();
-    }, [targetPoint, externalRobotPose, render]);
+    }, [targetPoint, externalRobotPose, visibleHeatmaps, stampPoseWithLatestGas, render, savedMap, recallInspection, isRecallMode, waypoints, activeWaypointIndex]);
+
+    const handleToggleHeatmap = (sensorId: GasSensorId) => {
+        setVisibleHeatmaps(prev => ({
+            ...prev,
+            [sensorId]: !prev[sensorId],
+        }));
+    };
+
+    const allHeatmapsVisible = GAS_SENSORS.every(s => visibleHeatmaps[s.id]);
+
+    const handleToggleAllHeatmaps = () => {
+        const nextState = !allHeatmapsVisible;
+        setVisibleHeatmaps({
+            methane: nextState,
+            flammable: nextState,
+            airQuality: nextState,
+        });
+    };
+
+    const handleClearHeatmaps = () => {
+        if (isRecallMode) return;
+        gasHeatmapsRef.current = createEmptyHeatmapStores();
+        lastRecordedPoseRef.current = null;
+        render();
+    };
+
+    const isWaypointAddMode = (mode === 'autonomous' || mode === 'p2p') && !isRecallMode;
 
     const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (mode !== 'p2p') return;
+        if (!isWaypointAddMode) return;
         const pt = getCanvasPoint(e);
         if (!pt) {
             hoverCoordsRef.current = null;
@@ -457,7 +814,10 @@ export default function MapView({
             return;
         }
 
-        const info = mapData.current ? mapData.current.info : fallbackInfo;
+        const effectiveMap = (isRecallMode && recallInspection?.savedMap)
+            ? recallInspection.savedMap
+            : (liveMapData.current || savedMap);
+        const info = effectiveMap ? effectiveMap.info : FALLBACK_MAP_INFO;
         hoverCoordsRef.current = mapToWorld(pt.canvasX, pt.canvasY, info);
         render();
     };
@@ -470,29 +830,57 @@ export default function MapView({
     };
 
     const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (mode !== 'p2p') return;
+        if (isRecallMode) return;
         const pt = getCanvasPoint(e);
         if (!pt) return;
 
-        const info = mapData.current ? mapData.current.info : fallbackInfo;
+        const effectiveMap = liveMapData.current || savedMap;
+        const info = effectiveMap ? effectiveMap.info : FALLBACK_MAP_INFO;
         const worldCoords = mapToWorld(pt.canvasX, pt.canvasY, info);
 
-        if (onSetTarget) {
+        if (mode === 'autonomous' && onAddWaypoint) {
+            onAddWaypoint(worldCoords);
+        } else if (onSetTarget) {
             onSetTarget(worldCoords);
         }
     };
 
     return (
-        <Container $isP2P={mode === 'p2p'}>
-            <Badge>
-                <Crosshair size={14} color={theme.colors.primary} />
-                POINT_TO_POINT_MISSION_MAP
-            </Badge>
+        <Container $isClickable={isWaypointAddMode} $isRecall={isRecallMode}>
+            {isRecallMode ? (
+                <Badge $recall>
+                    <History size={14} color="#5AC8FA" />
+                    RECALLED INSPECTION | {recallInspection?.id || 'ARCHIVED'} ({recallInspection?.title})
+                </Badge>
+            ) : (
+                <Badge>
+                    <Crosshair size={14} color={theme.colors.primary} />
+                    {mode === 'autonomous'
+                        ? 'AUTONOMOUS INSPECTION MAP'
+                        : mode === 'manual'
+                        ? 'INITIAL SURVEY & SLAM MAPPING'
+                        : 'POINT_TO_POINT_MISSION_MAP'}
+                </Badge>
+            )}
 
-            {mode === 'p2p' && (
-                <ModeHint>
+            {isRecallMode && (
+                <ModeHint $variant="info">
+                    <History size={12} />
+                    HISTORICAL RECALL MODE
+                </ModeHint>
+            )}
+
+            {!isRecallMode && mode === 'autonomous' && (
+                <ModeHint $variant="warning">
                     <MapPin size={12} />
-                    CLICK MAP TO SET WAYPOINT
+                    CLICK MAP TO ADD INSPECTION WAYPOINTS ({waypoints.length})
+                </ModeHint>
+            )}
+
+            {!isRecallMode && mode === 'manual' && (
+                <ModeHint $variant="success">
+                    <Navigation size={12} />
+                    MANUAL SURVEY ACTIVE - GENERATING MAP
                 </ModeHint>
             )}
 
@@ -505,12 +893,77 @@ export default function MapView({
                 />
             </CanvasWrapper>
 
+            <HeatmapPanel>
+                <HeatmapHeader>
+                    <HeatmapTitle>
+                        <Layers size={11} color={theme.colors.primary} />
+                        {isRecallMode ? 'SAVED GAS HEATMAPS' : 'LIVE GAS HEATMAPS'}
+                    </HeatmapTitle>
+                    <HeatmapActions>
+                        <SmallActionButton
+                            type="button"
+                            onClick={handleToggleAllHeatmaps}
+                            title={allHeatmapsVisible ? 'Hide all gas heatmaps' : 'Show all gas heatmaps'}
+                        >
+                            {allHeatmapsVisible ? 'NONE' : 'ALL'}
+                        </SmallActionButton>
+                        {!isRecallMode && (
+                            <SmallActionButton
+                                type="button"
+                                onClick={handleClearHeatmaps}
+                                title="Clear recorded gas heatmap samples"
+                                aria-label="Clear gas heatmaps"
+                            >
+                                <Trash2 size={9} />
+                            </SmallActionButton>
+                        )}
+                    </HeatmapActions>
+                </HeatmapHeader>
+
+                <SensorToggleList>
+                    {GAS_SENSORS.map(sensor => {
+                        const isActive = visibleHeatmaps[sensor.id];
+                        let formattedVal = 'WAIT';
+
+                        if (isRecallMode && recallInspection) {
+                            const peak = recallInspection.peakGas?.[sensor.id] || 0;
+                            const sampleCount = recallInspection.gasHeatmaps?.[sensor.id]?.length || 0;
+                            formattedVal = `${peak.toFixed(sensor.decimals)} ${sensor.unit} (${sampleCount} pts)`;
+                        } else {
+                            const latestVal = latestGasValues[sensor.id];
+                            formattedVal =
+                                latestVal !== null
+                                    ? `${latestVal.toFixed(sensor.decimals)} ${sensor.unit}`
+                                    : 'WAIT';
+                        }
+
+                        return (
+                            <SensorToggleButton
+                                key={sensor.id}
+                                type="button"
+                                $active={isActive}
+                                $color={sensor.colorHex}
+                                onClick={() => handleToggleHeatmap(sensor.id)}
+                                aria-pressed={isActive}
+                                title={`Toggle ${sensor.label} heatmap overlay`}
+                            >
+                                <SensorToggleLeft>
+                                    <ColorSwatch $active={isActive} $color={sensor.colorHex} />
+                                    <span>{sensor.label}</span>
+                                </SensorToggleLeft>
+                                <SensorReadingText>{formattedVal}</SensorReadingText>
+                            </SensorToggleButton>
+                        );
+                    })}
+                </SensorToggleList>
+            </HeatmapPanel>
+
             <Legend>
-                <LegendItem $color={theme.colors.primary}>Robot Position</LegendItem>
-                <LegendItem $color="#FF9500">Target Waypoint</LegendItem>
-                <LegendItem $color="#007AFF">Approach / Planned Path</LegendItem>
-                <LegendItem $color="#34C759">Human Detected</LegendItem>
-                <LegendItem $color="rgba(255, 59, 48, 0.4)">Hazard Zone</LegendItem>
+                {!isRecallMode && <LegendItem $color={theme.colors.primary}>Robot Position</LegendItem>}
+                <LegendItem $color="#FF9500">Active Waypoint / Route</LegendItem>
+                <LegendItem $color="#34C759">Reached Waypoint</LegendItem>
+                <LegendItem $color="#1C1C1E">Pending Waypoint</LegendItem>
+                <LegendItem $color="#007AFF">Planned Path</LegendItem>
             </Legend>
         </Container>
     );
